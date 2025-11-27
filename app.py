@@ -1,9 +1,12 @@
 import streamlit as st
-import undetected_chromedriver as uc
+from selenium import webdriver  # undetected 대신 기본 Selenium
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager  # 자동 드라이버 관리
 import pandas as pd
 import time
 from datetime import datetime, timedelta
@@ -39,9 +42,13 @@ def scroll_to_bottom(driver, scroll_wait_timeout=2, scroll_stable_interval=0.05)
 
 def scrape_with_period(start_date, end_date, progress_bar):
     """기간 필터링 크롤링 함수 (진행바 지원)"""
-    options = uc.ChromeOptions()
-    options.add_argument('--headless')  # 로컬 테스트 시 주석 해제
-    driver = uc.Chrome(options=options)
+    chrome_options = Options()
+    chrome_options.add_argument('--headless')  # Cloud 필수
+    chrome_options.add_argument('--no-sandbox')  # Cloud 서버 호환
+    chrome_options.add_argument('--disable-dev-shm-usage')  # 메모리 이슈 방지
+    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')  # 봇 차단 우회
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
     
     base_url = "https://www.gdhwelfare.or.kr/community/PhotoList.do?bbsNo=&pageIndex={}&searchKeyword="
     data = []
@@ -107,7 +114,7 @@ def scrape_with_period(start_date, end_date, progress_bar):
     finally:
         driver.quit()
 
-# Streamlit 앱 UI
+# Streamlit 앱 UI (기존과 동일)
 st.title("🖼️ GD 복지 사진 게시물 크롤러")
 st.write("기간 내 제목과 날짜를 자동 추출해 Excel로 저장합니다.")
 
@@ -132,7 +139,6 @@ st.sidebar.info(f"기간: {start_date} ~ {end_date}")
 if st.button("🚀 크롤링 시작", type="primary"):
     # 진행바 초기화
     progress_bar = st.progress(0)
-    status_text = st.empty()  # 상태 메시지용
     
     with st.spinner("크롤링 중... (페이지 로딩 및 스크롤 처리)"):
         data = scrape_with_period(start_dt, end_dt, progress_bar)
@@ -167,3 +173,11 @@ if st.button("🚀 크롤링 시작", type="primary"):
     else:
         st.warning("❌ 기간 내 게시물 없음. 기간을 조정해 보세요.")
 
+# 푸터: 도움말
+st.sidebar.markdown("---")
+st.sidebar.markdown("""
+### 📖 사용 팁
+- **날짜 형식**: 사이트 기준 자동 처리.
+- **에러 시**: 콘솔 로그 확인.
+- **배포**: 아래 가이드 참조.
+""")
