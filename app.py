@@ -61,7 +61,7 @@ def scroll_to_bottom(page):
 
 def scrape_with_period(start_date, end_date, progress_bar):
     data = []
-    base_url = "https://www.gdhwelfare.or.kr/community/PhotoList.do?bbsNo=&pageIndex={}&searchKeyword="
+    base_url = "https://www.gdhwelfare.or.kr/community/PhotoList.do?bbsNo=&pageIndex={}&searchKeyword=#none"
     page_index = 1
     max_pages = 100
     
