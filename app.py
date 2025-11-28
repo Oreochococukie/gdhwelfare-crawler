@@ -110,8 +110,8 @@ def scrape_with_period(start_date, end_date, progress_bar):
                             if upload_date:
                                 # 기간 내 데이터
                                 if start_date <= upload_date <= end_date:
-                                    # [수정] 데이터 리스트에 작성자 추가
-                                    data.append([Title_, Date_str, Author_])
+                                    # [수정] 데이터 저장 순서 변경: 제목 -> 작성자 -> 날짜
+                                    data.append([Title_, Author_, Date_str])
                                     page_has_valid = True
                                     current_page_collected += 1
                                 # 기간 지난 데이터 (과거 데이터) 나오면 종료
@@ -161,8 +161,8 @@ if st.button("🚀 크롤링 시작", type="primary"):
     progress_bar.progress(1.0, text="완료!")
     
     if data:
-        # [수정] DataFrame 컬럼에 '작성자' 추가
-        df = pd.DataFrame(data, columns=['제목', '날짜', '작성자'])
+        # [수정] DataFrame 컬럼 순서 변경: 제목, 작성자, 날짜
+        df = pd.DataFrame(data, columns=['제목', '작성자', '날짜'])
         st.success(f"총 {len(data)}건 수집 완료!")
         st.dataframe(df)
         
