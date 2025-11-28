@@ -96,16 +96,22 @@ def scrape_with_period(start_date, end_date, progress_bar):
                     try:
                         title_elem = item.query_selector(".bold.ellipsis")
                         date_elem = item.query_selector(".photo_info > span:nth-child(2)")
+                        # [추가] 작성자 엘리먼트 선택자
+                        author_elem = item.query_selector(".photo_info > span:nth-child(1)")
                         
                         if title_elem and date_elem:
                             Title_ = title_elem.inner_text().strip()
                             Date_str = date_elem.inner_text().strip()
+                            # [추가] 작성자 텍스트 추출 (없을 경우 '미상' 처리)
+                            Author_ = author_elem.inner_text().strip() if author_elem else "미상"
+
                             upload_date = parse_date(Date_str)
                             
                             if upload_date:
                                 # 기간 내 데이터
                                 if start_date <= upload_date <= end_date:
-                                    data.append([Title_, Date_str])
+                                    # [수정] 데이터 리스트에 작성자 추가
+                                    data.append([Title_, Date_str, Author_])
                                     page_has_valid = True
                                     current_page_collected += 1
                                 # 기간 지난 데이터 (과거 데이터) 나오면 종료
@@ -155,7 +161,8 @@ if st.button("🚀 크롤링 시작", type="primary"):
     progress_bar.progress(1.0, text="완료!")
     
     if data:
-        df = pd.DataFrame(data, columns=['제목', '날짜'])
+        # [수정] DataFrame 컬럼에 '작성자' 추가
+        df = pd.DataFrame(data, columns=['제목', '날짜', '작성자'])
         st.success(f"총 {len(data)}건 수집 완료!")
         st.dataframe(df)
         
