@@ -9,27 +9,22 @@ import io
 # ------------------------------------------------------
 # [핵심] Streamlit Cloud에서 Playwright 브라우저 강제 설치
 # ------------------------------------------------------
-# 이 코드가 없으면 클라우드에서 "Executable doesn't exist" 에러가 뜹니다.
 @st.cache_resource
 def install_playwright_browser():
-    print("🚀 Playwright 브라우저 설치 중...")
     try:
         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-        print("✅ 브라우저 설치 완료!")
     except Exception as e:
         print(f"❌ 설치 중 오류 발생: {e}")
 
-# 앱 시작 시 딱 한 번만 실행됨
 install_playwright_browser()
 
 from playwright.sync_api import sync_playwright
 
 # ------------------------------------------------------
-# 기존 크롤링 로직 (그대로 유지)
+# 크롤링 로직
 # ------------------------------------------------------
 
 def parse_date(date_str):
-    """날짜 문자열을 datetime으로 파싱"""
     try:
         return datetime.strptime(date_str.strip(), '%Y-%m-%d')
     except ValueError:
@@ -39,35 +34,25 @@ def parse_date(date_str):
             return None
 
 def scroll_to_bottom(page):
-    """동적 콘텐츠 로드를 위한 스크롤"""
-    scroll_wait_timeout = 2000
-    scroll_stable_interval = 50
-    before_h = page.evaluate("() => window.scrollY")
-    
-    while True:
-        page.keyboard.press("End")
-        stable_time = 0
-        while stable_time < scroll_wait_timeout:
-            time.sleep(scroll_stable_interval / 1000)
-            after_h = page.evaluate("() => window.scrollY")
-            if after_h == before_h:
-                stable_time += scroll_stable_interval
-                page.keyboard.press("End")
-            else:
-                before_h = after_h
-                break
-        else:
-            break
+    """스크롤을 부드럽게 내려서 데이터 로딩 유도"""
+    try:
+        # 한 번에 확 내리지 않고 나눠서 내림 (데이터 로딩 트리거)
+        for _ in range(3):
+            page.keyboard.press("End")
+            time.sleep(0.5)
+    except:
+        pass
 
 def scrape_with_period(start_date, end_date, progress_bar):
     data = []
-    base_url = "https://www.gdhwelfare.or.kr/community/PhotoList.do?bbsNo=&pageIndex={}&searchKeyword=#none"
+    # URL 뒤에 불필요한 파라미터 제거하고 pageIndex만 딱 바꿈
+    base_url = "https://www.gdhwelfare.or.kr/community/PhotoList.do?pageIndex={}"
     page_index = 1
-    max_pages = 100
+    max_pages = 50 # 안전을 위해 최대 페이지 제한 (필요시 늘리세요)
     
     with sync_playwright() as p:
-        # Streamlit Cloud에서는 headless 모드 필수
         browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-dev-shm-usage'])
+        # 모바일 뷰포트로 설정하면 리스트가 더 단순하게 나올 수 있음 (선택사항)
         context = browser.new_context(
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         )
@@ -76,30 +61,37 @@ def scrape_with_period(start_date, end_date, progress_bar):
         try:
             while page_index <= max_pages:
                 progress = page_index / max_pages
-                progress_bar.progress(progress, text=f"페이지 {page_index}/{max_pages} 처리 중...")
+                progress_bar.progress(progress, text=f"📄 {page_index}페이지 읽는 중...")
                 
                 url = base_url.format(page_index)
-                # st.write(f"📄 페이지 {page_index} 로딩 중...") # 로그 너무 많으면 지저분해서 주석 처리
                 
                 try:
-                    page.goto(url, wait_until='networkidle', timeout=60000) # 타임아웃 60초로 넉넉하게
+                    # [핵심 수정] networkidle -> domcontentloaded (뼈대만 오면 통과)
+                    # 타임아웃도 30초로 줄여서 빨리빨리 넘어가게 함
+                    page.goto(url, wait_until='domcontentloaded', timeout=30000)
                 except Exception as e:
-                    st.error(f"페이지 로드 실패: {e}")
-                    break
+                    st.error(f"{page_index}페이지 접속 실패 (재시도 필요): {e}")
+                    page_index += 1
+                    continue
 
+                # 리스트 요소가 뜰 때까지 잠깐 대기 (최대 3초)
                 try:
-                    page.wait_for_selector(".list_in", timeout=5000)
+                    page.wait_for_selector(".list_in", state="attached", timeout=3000)
                 except:
-                    st.write("게시물이 없거나 로딩이 너무 오래 걸립니다.")
+                    # 리스트가 안 뜨면 데이터가 없거나 로딩 실패로 간주
+                    st.write(f"⚠️ {page_index}페이지에 게시물이 없거나 로딩이 늦습니다.")
                     break
                 
                 scroll_to_bottom(page)
                 
                 items = page.query_selector_all(".list_in")
                 if not items:
+                    st.write("게시물 없음, 종료합니다.")
                     break
                 
                 page_has_valid = False
+                current_page_collected = 0
+                
                 for item in items:
                     try:
                         title_elem = item.query_selector(".bold.ellipsis")
@@ -111,20 +103,29 @@ def scrape_with_period(start_date, end_date, progress_bar):
                             upload_date = parse_date(Date_str)
                             
                             if upload_date:
+                                # 기간 내 데이터
                                 if start_date <= upload_date <= end_date:
                                     data.append([Title_, Date_str])
                                     page_has_valid = True
-                                else:
-                                    if upload_date < start_date:
-                                        return data
+                                    current_page_collected += 1
+                                # 기간 지난 데이터 (과거 데이터) 나오면 종료
+                                elif upload_date < start_date:
+                                    st.success(f"⏹️ 설정된 기간({start_date.date()}) 이전 데이터 도달. 크롤링 종료.")
+                                    return data
                     except Exception:
                         continue
                 
-                if not page_has_valid and page_index > 1:
-                    break
+                # 로그 출력 (디버깅용)
+                # st.write(f"✅ {page_index}페이지: {current_page_collected}건 수집")
+
+                # 이번 페이지에 유효한 데이터가 하나도 없고, 이미 과거 날짜도 아니라면? (빈 페이지 등)
+                if not page_has_valid and current_page_collected == 0:
+                    # 혹시 모르니 다음 페이지도 한 번 더 가보게 할 수도 있지만, 보통은 여기서 끝냄
+                    pass 
                 
                 page_index += 1
-                time.sleep(1)
+                # 너무 빨리 요청하면 서버가 차단할 수 있으니 0.5초 휴식
+                time.sleep(0.5)
             
             return data
         finally:
@@ -132,16 +133,16 @@ def scrape_with_period(start_date, end_date, progress_bar):
     
     return data
 
-# UI 부분
+# UI 설정
 st.set_page_config(page_title="GD 복지 크롤러", page_icon="🐢")
 
 st.title("🐢 GD 복지 사진 게시물 크롤러")
-st.markdown("Playwright 엔진을 사용하여 동적 페이지를 크롤링합니다.")
+st.markdown("Playwright 엔진 (고속 모드) 가동 중")
 
 st.sidebar.header("📅 설정")
 col1, col2 = st.sidebar.columns(2)
 with col1:
-    start_date = st.sidebar.date_input("시작 날짜", value=datetime.now() - timedelta(days=7))
+    start_date = st.sidebar.date_input("시작 날짜", value=datetime.now() - timedelta(days=30))
 with col2:
     end_date = st.sidebar.date_input("종료 날짜", value=datetime.now())
 
@@ -150,9 +151,7 @@ if st.button("🚀 크롤링 시작", type="primary"):
     end_dt = datetime.combine(end_date, datetime.min.time())
     
     progress_bar = st.progress(0)
-    with st.spinner("브라우저를 띄우고 데이터를 수집 중입니다..."):
-        data = scrape_with_period(start_dt, end_dt, progress_bar)
-    
+    data = scrape_with_period(start_dt, end_dt, progress_bar)
     progress_bar.progress(1.0, text="완료!")
     
     if data:
@@ -160,7 +159,6 @@ if st.button("🚀 크롤링 시작", type="primary"):
         st.success(f"총 {len(data)}건 수집 완료!")
         st.dataframe(df)
         
-        # 엑셀 다운로드
         output = io.BytesIO()
         df.to_excel(output, index=False, engine='openpyxl')
         output.seek(0)
@@ -168,8 +166,8 @@ if st.button("🚀 크롤링 시작", type="primary"):
         st.download_button(
             label="📥 엑셀 다운로드",
             data=output.getvalue(),
-            file_name=f"result_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            file_name=f"gd_welfare_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.warning("수집된 데이터가 없습니다.")
+        st.warning("수집된 데이터가 없습니다. 기간을 확인해주세요.")
